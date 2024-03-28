@@ -40,79 +40,182 @@ plotTime <- function(object, prop = 0.8, plotShifts = FALSE,
                      ...){
   stopifnot(prop < 1)
 
-  x <- getPlotData(object, prop = prop, deriv = deriv)
-  x$time <- adjustTimeColumn(objectTime = object@time, deriv = deriv)
+  x <- extractPlotData(object, prop = prop, deriv = deriv)
   
-  if (nrow(x) > 1) lineFct <- geom_line else lineFct <- geom_point
   if(is.null(oldPlot)){
-    p <- ggplot(x, aes(x = .data[["time"]])) + 
-      lineFct(aes(y = .data[["median"]]), colour = colorL, alpha = alphaL) +
-      lineFct(aes(y = .data[["lower"]]), size = 0.05, colour = colorL, alpha = alphaL) +
-      lineFct(aes(y = .data[["upper"]]), size = 0.05, colour = colorL, alpha = alphaL) +
-      coord_cartesian(ylim = yLim, xlim = xLim) +
-      theme(panel.grid.major.x = element_line(size = 0.1)) + 
-      theme(axis.title.x = element_text(size = sizeTextX),
-            axis.title.y = element_text(size = sizeTextY),
-            axis.text.x = element_text(size = sizeAxisX),
-            axis.text.y = element_text(size = sizeAxisY))
-    p <- p %>%
-      formatPointsOfGGplot(data = x, aes(x = .data[["time"]], y = .data[["median"]]), pointStyle = pointStyle)
-    if (nrow(x) > 1) p <- p + geom_ribbon(aes(ymin = .data[["lower"]], ymax = .data[["upper"]]), 
-                                          linetype = 2, alpha = alphaU, fill = colorU) 
+    p <- basePlotTime(x = x,
+                      xLim = xLim, yLim = yLim,
+                      sizeTextX = sizeTextX, sizeTextY = sizeTextY,
+                      sizeAxisX = sizeAxisX, sizeAxisY = sizeAxisY) %>%
+      setTitles(prop, xAxisLabel, yAxisLabel)
   } else {
-    if(secAxis){
-      oldCoord <- oldPlot$coordinates$limits$y
-      b <- seq(min(yLim),max(yLim), length.out = 100)
-      a <- seq(min(oldCoord),max(oldCoord), length.out = 100)
-      res <- lm(b~a)
-      
-      scale <- res$coefficients[2]
-      center <- res$coefficients[1]
-      x$median <- (x$median  - center ) / scale
-      x$lower <- (x$lower - center ) / scale
-      x$upper <- (x$upper  - center ) / scale
-    }
-    p <- oldPlot  + geom_line(data = x, aes(y = .data[["median"]]), colour = colorL, alpha = alphaL) +
-      geom_line(data = x, aes(y = .data[["lower"]]), size = 0.05, colour = colorL, alpha = alphaL) +
-      geom_line(data = x, aes(y = .data[["upper"]]), size = 0.05, colour = colorL, alpha = alphaL) +
-      geom_ribbon(data = x, aes(ymin = .data[["lower"]], ymax = .data[["upper"]]), linetype = 2, alpha = alphaU, fill = colorU)
-    p <- p %>%
-      formatPointsOfGGplot(data = x, aes(x = .data[["time"]], y = .data[["median"]]), pointStyle = pointStyle)
+    rescaling <- getRescaleParams(oldLimits = oldPlot$coordinates$limits$y,
+                                  newLimits = getYRange(x) %>% unlist())
+    x <- x %>%
+      rescaleLayerData(rescaling = rescaling, 
+                       secAxis = secAxis)
     
-    if(secAxis){
-      p <- p + 
-      theme(axis.title.y = element_text(size = sizeTextY),
-            axis.text.y = element_text(size = sizeAxisY)) +   scale_y_continuous(
-             # Features of the first axis
-             # Add a second axis and specify its features
-             sec.axis = sec_axis(~(.* scale) + center, name=yAxisLabel)
-           )
-    }
+    p <- oldPlot %>%
+      setSecondYAxis(rescaling = rescaling,
+                     secAxis = secAxis,
+                     sizeTextY = sizeTextY,
+                     sizeAxisY = sizeAxisY,
+                     yAxisLabel = yAxisLabel)
   }
   
-  xAxisData <- getXAxisData(object = object, oldXAxisData = oldXAxisData)
-  
-  xLabelLim <- range(xAxisData)
-  if (extendLabels) xLabelLim <- xLim
-  xAxisData <- xAxisData %>%
-    extendXAxis(xLabelLim = xLabelLim)
-  
-  breaks <- getBreaks(time = xAxisData$time, deriv = deriv)
-  labels <- getLabel(xAxisData = xAxisData, deriv = deriv)
-  
-  p <- p + 
-    scale_x_continuous(breaks = breaks, labels = labels) +
-    labs(title = paste0(prop * 100, "%-Credibility-Interval for isotopic values over time"),
-         x = xAxisLabel, y = yAxisLabel)
+  p %>%
+    drawLinesAndRibbon(x = x, colorL = colorL, colorU = colorU, alphaL = alphaL, alphaU = alphaU) %>%
+    formatPointsOfGGplot(data = x, aes(x = .data[["time"]], y = .data[["median"]]), pointStyle = pointStyle) %>%
+    setXAxisLabels(xAxisData = getXAxisData(object = object, oldXAxisData = oldXAxisData),
+                   extendLabels = extendLabels, 
+                   xLim = xLim, 
+                   deriv = deriv,
+                   plotShifts = plotShifts,
+                   ...)
+}
 
-  if (plotShifts){
-    index <- getShiftIndex(object, ...)
-    p <- p + geom_vline(xintercept = breaks[which(index)] + 0.5, col = "darkgrey")
-  }
+basePlotTime <- function(x,
+                         xLim = NULL, yLim = NULL, 
+                         sizeTextX = 12, sizeTextY = 12, 
+                         sizeAxisX = 12, sizeAxisY = 12) {
+  p <- ggplot(x, aes(x = .data[["time"]])) + 
+    theme(panel.grid.major.x = element_line(linewidth = 0.1)) + 
+    theme(axis.title.x = element_text(size = sizeTextX),
+          axis.text.x = element_text(size = sizeAxisX),
+          axis.title.y = element_text(size = sizeTextY),
+          axis.text.y = element_text(size = sizeAxisY))
+  
+  p <- p %>%
+    setPlotLimits(xLim = xLim, yLim = yLim)
   
   p
 }
 
+setPlotLimits <- function(plot, newData = NULL, xLim = NULL, yLim = NULL) {
+  allData <- plot$data
+  if(!is.null(newData)) allData <- bind_rows(plot$data, newData) %>% distinct()
+  
+  if (length(xLim) == 0) xLim <- getXRange(allData) %>% unlist()
+  if (length(yLim) == 0) yLim <- getYRange(allData) %>% unlist()
+  
+  plot + coord_cartesian(ylim = yLim, xlim = xLim)
+}
+
+setSecondYAxis <- function(plot, rescaling, secAxis = FALSE, 
+                           sizeTextY = 12, sizeAxisY = 12, yAxisLabel = "Estimate") {
+  if (!secAxis) return(plot)
+  
+  scale <- rescaling$scale
+  center <- rescaling$center
+
+  plot <- plot + 
+    theme(axis.title.y = element_text(size = sizeTextY),
+          axis.text.y = element_text(size = sizeAxisY)) +
+    scale_y_continuous(
+      # Features of the first axis
+      # Add a second axis and specify its features
+      sec.axis = sec_axis(~(.* scale) + center, name = yAxisLabel)
+    )
+  
+  plot
+}
+
+rescaleLayerData <- function(x, rescaling, secAxis = FALSE) {
+  if (!secAxis) return(x)
+  
+  scale <- rescaling$scale
+  center <- rescaling$center
+  
+  x$median <- (x$median  - center ) / scale
+  x$lower <- (x$lower - center ) / scale
+  x$upper <- (x$upper  - center ) / scale
+  
+  x
+}
+
+getRescaleParams <- function(oldLimits, newLimits = NULL) {
+  if (length(newLimits) == 0) return(list(scale = 1, center = 0))
+  
+  b <- seq(min(newLimits),max(newLimits), length.out = 100)
+  a <- seq(min(oldLimits),max(oldLimits), length.out = 100)
+  res <- lm(b~a)
+  
+  list(scale = res$coefficients[2],
+       center = res$coefficients[1])
+}
+
+drawLinesAndRibbon <- function(plot, x, colorL, colorU, alphaL, alphaU) {
+  if (nrow(x) > 1) {
+    plot <- plot +
+      geom_line(data = x, aes(y = .data[["median"]]), colour = colorL, alpha = alphaL) +
+      geom_line(data = x, aes(y = .data[["lower"]]), linewidth = 0.05, colour = colorL, alpha = alphaL) +
+      geom_line(data = x, aes(y = .data[["upper"]]), linewidth = 0.05, colour = colorL, alpha = alphaL)
+  } else {
+    plot <- plot +
+      geom_point(data = x, aes(y = .data[["median"]]), colour = colorL, alpha = alphaL) +
+      geom_point(data = x, aes(y = .data[["lower"]]), size = 0.05, colour = colorL, alpha = alphaL) +
+      geom_point(data = x, aes(y = .data[["upper"]]), size = 0.05, colour = colorL, alpha = alphaL)
+  }
+  
+  if (nrow(x) > 1) {
+    plot <- plot + 
+      geom_ribbon(data = x, aes(ymin = .data[["lower"]], ymax = .data[["upper"]]), 
+                  linetype = 2, alpha = alphaU, fill = colorU)
+  }
+  
+  plot
+}
+
+setTitles <- function(plot, prop, xAxisLabel = "Time", yAxisLabel = "Estimate") {
+  stopifnot(prop < 1)
+  
+  plot +
+    labs(title = paste0(prop * 100, "%-Credibility-Interval for isotopic values over time"),
+         x = xAxisLabel, y = yAxisLabel)
+}
+
+setXAxisLabels <- function(plot, xAxisData, extendLabels, xLim, deriv, plotShifts = FALSE, ...) {
+  xPlotLim <- xLabelLim <- range(xAxisData)
+  
+  if (length(xLim) == 2) xPlotLim <- xLim
+  
+  if (extendLabels && length(xLim) == 2) {
+    xLabelLim <- xLim
+    xAxisData <- xAxisData %>%
+      extendXAxis(xLabelLim = xLabelLim)
+  }
+  
+  breaks <- getBreaks(time = xAxisData$time, deriv = deriv)
+  labels <- getLabel(xAxisData = xAxisData, deriv = deriv)
+  
+  plot <- plot + 
+    scale_x_continuous(breaks = breaks, labels = labels, limits = xPlotLim) 
+  
+  if (plotShifts){
+    index <- getShiftIndex(object, ...)
+    plot <- plot + geom_vline(xintercept = breaks[which(index)] + 0.5, col = "darkgrey")
+  }
+  
+  plot
+}
+
+getLim <- function(plotRanges, axis = c("xAxis", "yAxis")) {
+  axis <- match.arg(axis)
+  
+  if (plotRanges[[axis]][["fromData"]]) return(numeric(0))
+  
+  c(plotRanges[[axis]][["min"]], plotRanges[[axis]][["max"]])
+}
+
+#' Extract Plot Data
+#' 
+#' @inheritParams plotTime
+extractPlotData <- function(object, prop = 0.8, deriv = "1") {
+  x <- getPlotData(object, prop = prop, deriv = deriv)
+  x$time <- adjustTimeColumn(objectTime = object@time, deriv = deriv)
+  
+  x
+}
 
 #' Get Plot Data
 #' 
@@ -157,6 +260,24 @@ adjustTimeColumn <- function(objectTime, deriv){
   }
   
   res
+}
+
+#' Extract All X-Axis Data
+#' 
+#' Extract all x-axis data to draw x axis ticks and labels at all possible points in time present 
+#'  in models
+#' 
+#' @param models (list) list of models
+#' @param allXAxisData (data.frame) empty data.frame, or a data.frame containing xAxisData, output
+#'  of \code{getXAxisData}
+#' 
+#' @export
+extractAllXAxisData <- function(models, allXAxisData = data.frame()) {
+  for (i in 1:length(models)) {
+    allXAxisData <- getXAxisData(models[[i]]$fit, oldXAxisData = allXAxisData)
+  }
+  
+  allXAxisData
 }
 
 #' Get X-Axis Data
@@ -293,10 +414,7 @@ getDefaultPlotRange <- function(savedModels, deriv = "1"){
 
   dat <- lapply(savedModels, function(model){
     if (is.null(model$fit)) return(NULL)
-    fit <- model$fit
-    x <- getPlotData(fit, prop = 0.8, deriv = deriv)
-    x$time <- adjustTimeColumn(objectTime = fit@time, deriv = deriv)
-    x
+    extractPlotData(object = model$fit, prop = 0.8, deriv = deriv)
     })
   
   dat <- dat %>% bind_rows()
@@ -316,5 +434,28 @@ getDefaultPlotRange <- function(savedModels, deriv = "1"){
   list(xmin = xmin,
        xmax = xmax,
        ymin = ymin - 0.1*rangeY,
+       ymax = ymax + 0.1*rangeY)
+}
+
+getXRange <- function(dat) {
+  if (nrow(dat) == 0) return(list(xmin = defaultInputsForUI()$xmin,
+                                  xmax = defaultInputsForUI()$xmax))
+  
+  xmin <- min(dat$time, na.rm = TRUE)
+  xmax <- max(dat$time, na.rm = TRUE)
+  
+  list(xmin = xmin,
+       xmax = xmax)
+}
+
+getYRange <- function(dat) {
+  if (nrow(dat) == 0) return(list(ymin = defaultInputsForUI()$ymin,
+                                  ymax = defaultInputsForUI()$ymax))
+  
+  ymin <- min(dat$lower, na.rm = TRUE)
+  ymax <- max(dat$upper, na.rm = TRUE)
+  rangeY <- ymax - ymin
+  
+  list(ymin = ymin - 0.1*rangeY,
        ymax = ymax + 0.1*rangeY)
 }
